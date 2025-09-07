@@ -1,0 +1,4 @@
+mcp>=1.10.0
+pandas>=2.2.0
+python-dateutil>=2.9.0
+rapidfuzz>=3.9.0
