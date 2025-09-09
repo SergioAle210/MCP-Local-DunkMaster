@@ -1,154 +1,192 @@
-# DunkMaster Stats MCP (Local)
+# MCP‑Local‑DunkMaster — NBA Stats MCP (Two integration modes)
 
-An **MCP server** that exposes _non‑trivial_ NBA analytics over **22 CSV datasets (1947–present)**.  
-Transport: **STDIO** (local). Designed to be consumed by any MCP host/chatbot that can spawn a local server and call MCP tools.
+This repository provides a **Model Context Protocol (MCP)** server over your local NBA datasets (22 CSVs, 1947–present).  
+It supports **two ways** to integrate with a chatbot or any MCP‑capable host:
 
-> This repository is intended for the “local MCP server” requirement in your networking/LLM project.
-> It loads the CSVs once on startup and offers four tools: `player_summary`, `top_scorers`, `compare_players`, `team_summary`.
+1) **HTTP JSON‑RPC (no SDK)** — `http_stats_server.py`  
+   Speak **pure JSON‑RPC 2.0** over HTTP. Ideal when you want wire‑level control and to demonstrate MCP without an SDK.
+
+2) **STDIO (SDK‑based)** — `server.py`  
+   A classic STDIO MCP server (spawned as a child process by the host). Uses the Python MCP utilities/SDK.
+
+> **Data**: Put the CSV files in `./data/` (or point `STATS_DATA_PATH` to a custom folder).  
+> CSV naming must match the dataset filenames exactly (e.g., `Player Per Game.csv`, `Team Summaries.csv`, etc.).
 
 ---
 
-## Contents
+## Table of contents
 
 - [Features](#features)
-- [Tools (Endpoints)](#tools-endpoints)
-- [Installation](#installation)
-- [Data layout (required CSVs)](#data-layout-required-csvs)
-- [Quick start (diagnostic run)](#quick-start-diagnostic-run)
-- [Integrating with your chatbot](#integrating-with-your-chatbot)
-  - [A) Environment‑variable setup](#a-environment-variable-setup)
-  - [B) Spawning the server (STDIO)](#b-spawning-the-server-stdio)
-  - [C) Calling tools](#c-calling-tools)
-- [Natural‑language prompts to test](#natural-language-prompts-to-test)
+- [Requirements](#requirements)
+- [Mode A — HTTP JSON‑RPC (no SDK)](#mode-a--http-json-rpc-no-sdk)
+  - [Start the server](#start-the-server)
+  - [JSON‑RPC endpoint and examples](#json-rpc-endpoint-and-examples)
+  - [Integrate with your chatbot](#integrate-with-your-chatbot)
+- [Mode B — STDIO (SDK)](#mode-b--stdio-sdk)
+  - [Diagnostic run](#diagnostic-run)
+  - [Integrate with your chatbot](#integrate-with-your-chatbot-1)
+- [Tools (capabilities)](#tools-capabilities)
+- [CSV data files](#csv-data-files)
 - [Troubleshooting](#troubleshooting)
-- [License & Data credit](#license--data-credit)
+- [License & data credit](#license--data-credit)
 
 ---
 
 ## Features
 
-- **Local, offline analytics**: no external API calls; your host only needs to spawn one process via STDIO.
-- **Fast CSV engine** with `pandas`, preloaded once on startup.
-- **Fuzzy player/team matching** via `rapidfuzz` (handles minor typos).
-- **Deterministic JSON output** (pretty‑printed text) – easy to render or post‑process.
-- **Version‑tolerant server boot**: works with `FastMCP` variants that expose either `run()` or `run_stdio()`.
+- **Local, offline analytics** over NBA CSVs; no external API calls.
+- **Two integration modes**: HTTP JSON‑RPC (no SDK) and STDIO (SDK).
+- **Fast CSV engine** with `pandas`, lazy‑loaded and cached on first use.
+- **Fuzzy player/team matching** (accepts minor typos and team abbreviations like `CHI`, `LAL`).
+- **Deterministic output**: each tool returns a single text block with a **human‑readable summary** (can also be parsed as needed).
+- **Host‑agnostic**: works with DunkMaster or any MCP‑capable client.
 
 ---
 
-## Tools (Endpoints)
+## Requirements
 
-All tools are reachable via MCP **`call_tool`**. Request/response bodies are JSON. The server returns a single **text part** containing **pretty JSON**.
-
-### `player_summary(player: string) -> object`
-
-Returns:
-
-```json
-{
-  "match": "Michael Jordan",
-  "score": 99.0,
-  "span": { "from": 1985, "to": 2003 },
-  "teams": ["CHI", "WAS"],
-  "career_avgs": { "pts": 30.12, "ast": 5.3, "trb": 6.2 },
-  "all_star_selections": 14,
-  "top_award_shares": [
-    { "award": "MVP", "season": 1996, "share": 0.97, "winner": true }
-  ]
-}
-```
-
-Notes: Weighted career averages by games when possible; fuzzy name resolution.
-
-### `top_scorers(season: int, n: int = 10) -> array<object>`
-
-Returns top _n_ by **PTS/G** for the season:
-
-```json
-[
-  { "player": "Michael Jordan", "team": "CHI", "pts_per_game": 30.4, "g": 82 },
-  { "player": "Hakeem Olajuwon", "team": "HOU", "pts_per_game": 27.3, "g": 82 }
-]
-```
-
-### `compare_players(player_a: string, player_b: string, basis: "per_game"|"per_36"|"per_100" = "per_game") -> object`
-
-Returns side‑by‑side weighted career averages for the chosen basis:
-
-```json
-{
-  "basis": "per_36",
-  "player_a": {
-    "match": "Michael Jordan",
-    "g": 1072,
-    "pts": 28.3,
-    "ast": 4.9,
-    "trb": 5.9,
-    "score": 99.0
-  },
-  "player_b": {
-    "match": "LeBron James",
-    "g": 1500,
-    "pts": 26.6,
-    "ast": 6.9,
-    "trb": 7.2,
-    "score": 99.0
-  }
-}
-```
-
-### `team_summary(season: int, team: string) -> object`
-
-Returns record and efficiency metrics from _Team Summaries_ for that season:
-
-```json
-{
-  "match": "Chicago Bulls",
-  "score": 98.0,
-  "season": 1996,
-  "summary": {
-    "w": 72,
-    "l": 10,
-    "srs": 11.8,
-    "o_rtg": 115.2,
-    "d_rtg": 101.8,
-    "n_rtg": 13.4,
-    "pace": 91.1
-  }
-}
-```
+- Python **3.10+**
+- `pip install -r requirements.txt`
+- CSVs present under `./data/` (or set `STATS_DATA_PATH`)
 
 ---
 
-## Installation
+## Mode A — HTTP JSON‑RPC (no SDK)
 
-> **Python 3.10+** is recommended.
+### Start the server
+
+**Windows (PowerShell):**
+```powershell
+# In this repo (MCP-Local-DunkMaster)
+$env:STATS_DATA_PATH = "C:/full/path/to/MCP-Local-DunkMaster/data"
+python http_stats_server.py
+# → Uvicorn running on http://0.0.0.0:9000
+```
+**macOS/Linux (bash):**
+```bash
+export STATS_DATA_PATH="$HOME/path/to/MCP-Local-DunkMaster/data"
+python http_stats_server.py
+# → running on http://0.0.0.0:9000
+```
+
+### JSON‑RPC endpoint and examples
+
+- **URL**: `http://127.0.0.1:9000/jsonrpc`
+- **Method**: `POST`
+- **Content‑Type**: `application/json`
+- **Methods implemented**:
+  - `initialize` → `{"protocolVersion": "2.0"}`
+  - `tools/list` → `{"tools":[ ... ]}`
+  - `tools/call` → executes a tool by name with arguments
+  - `shutdown`
+
+**PowerShell examples:**
+```powershell
+$URL = "http://127.0.0.1:9000/jsonrpc"
+
+# 1) Initialize
+irm -Method Post -ContentType 'application/json' -Body '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' $URL
+
+# 2) List tools
+irm -Method Post -ContentType 'application/json' -Body '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' $URL
+
+# 3) Call a tool: player_summary
+irm -Method Post -ContentType 'application/json' -Body '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"player_summary","arguments":{"player":"Michael Jordan"}}}' $URL
+
+# 4) Call a tool: team_summary (by name or abbreviation)
+irm -Method Post -ContentType 'application/json' -Body '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"team_summary","arguments":{"season":1996,"team":"Chicago Bulls"}}}' $URL
+irm -Method Post -ContentType 'application/json' -Body '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"team_summary","arguments":{"season":1996,"team":"CHI"}}}' $URL
+```
+
+**cURL equivalents:**
+```bash
+URL=http://127.0.0.1:9000/jsonrpc
+
+curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' $URL
+
+curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' $URL
+
+curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"player_summary","arguments":{"player":"Michael Jordan"}}}' $URL
+
+curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"team_summary","arguments":{"season":1996,"team":"Chicago Bulls"}}}' $URL
+```
+
+### Integrate with your chatbot
+
+Set in your **host/chatbot** project:
+```
+STATS_MCP_URL=http://127.0.0.1:9000/jsonrpc
+```
+Your host should POST JSON‑RPC requests to that URL and consume responses like:
+```json
+{"content":[{"type":"text","text":"...human friendly summary..."}], "isError": false}
+```
+If you’re using **DunkMaster**, it auto‑detects `STATS_MCP_URL` and will route `stats.*` steps through HTTP JSON‑RPC.
+
+---
+
+## Mode B — STDIO (SDK)
+
+### Diagnostic run
+
+You normally **don’t** run the STDIO server directly—your host will spawn it. To verify it boots with your CSVs:
 
 ```bash
-# Create and activate a virtual environment (recommended)
-python -m venv .venv
-# Windows
-.\.venv\Scripts\activate
-# macOS/Linux
-source .venv/bin/activate
-
-# Install server dependencies
-pip install -r requirements.txt
+python server.py --data ./data
+# The process waits for STDIO JSON-RPC; Ctrl+C to stop
 ```
 
-`requirements.txt` (reference):
+### Integrate with your chatbot
 
+In the **host/chatbot** project set:
 ```
-mcp>=1.10.0
-pandas>=2.2.0
-python-dateutil>=2.9.0
-rapidfuzz>=3.9.0
+STATS_MCP_PATH=C:/full/path/to/MCP-Local-DunkMaster/server.py
+STATS_DATA_PATH=C:/full/path/to/MCP-Local-DunkMaster/data
 ```
+The host should spawn:
+```
+python <STATS_MCP_PATH> --data <STATS_DATA_PATH>
+```
+…and then talk MCP via **STDIO** (initialize → list_tools → call_tool).  
+On Windows: avoid quotes in env values; use forward slashes for long paths with spaces.
 
 ---
 
-## Data layout (required CSVs)
+## Tools (capabilities)
 
-Place **all 22 CSV files** under `./data/` with **exact** names (case‑sensitive on Linux/macOS). This server expects (subset shown):
+> All tools return a single “text” content block (human‑readable). Your host can display it directly or parse metrics if needed.
+
+- **`player_summary`**  
+  **Args**: `{"player": "Michael Jordan"}`  
+  **Uses**: `Player Per Game.csv` (+ optionally `Player Totals.csv`, `All‑Star Selections.csv`, `Player Award Shares.csv`, `Player Career Info.csv`).  
+  **Output**: seasons span, teams, rough career averages (PPG/RPG/APG), awards/All‑Stars summary.
+
+- **`top_scorers`**  
+  **Args**: `{"season": 1996, "n": 10}`  
+  **Uses**: `Player Per Game.csv`.  
+  **Output**: Top‑N by `pts_per_game` for the season.
+
+- **`compare_players`**  
+  **Args**: `{"player_a": "...", "player_b": "...", "basis": "per_game|per_36|per_100"}`  
+  **Uses**: `Player Per Game.csv`, `Per 36 Minutes.csv`, `Per 100 Poss.csv`.  
+  **Output**: Side‑by‑side weighted career averages for the basis.
+
+- **`team_summary`**  
+  **Args**: `{"season": 1996, "team": "Chicago Bulls"}` (or `"CHI"`)  
+  **Uses**: `Team Summaries.csv` + `Team Stats Per Game.csv`.  
+  **Output**: W‑L, SRS, ORtg, DRtg, Net, Pace, TS%, eFG%, TOV%, ORB%, FT/FGA, PTS/G, TRB/G, AST/G, 3P%.  
+  **Matching**: name or abbreviation; prefers regular‑season rows.
+
+---
+
+## CSV data files
+
+Place the files under `./data/` (or point `STATS_DATA_PATH`). Filenames must match **exactly** (case‑sensitive on macOS/Linux).  
+Full set (22 files):
 
 ```
 Advanced.csv
@@ -175,124 +213,29 @@ Team Summaries.csv
 Team Totals.csv
 ```
 
-> **Minimum required by current tools:**  
-> `Player Per Game.csv`, `Per 36 Minutes.csv`, `Per 100 Poss.csv`, `Player Totals.csv`, `Player Career Info.csv`, `All-Star Selections.csv`, `Player Award Shares.csv`, `Team Summaries.csv`.
-
----
-
-## Quick start (diagnostic run)
-
-You normally **don’t** run the server manually – your chatbot/host will spawn it via **STDIO**.  
-For a quick diagnostic (to confirm the CSVs load without crashing):
-
-```bash
-python server.py --data ./data
-# The process will keep running, waiting for STDIO (press Ctrl+C to stop)
-```
-
-If your installed `FastMCP` exposes `run_stdio()`, the server will use it; otherwise it will fall back to `run()` automatically.
-
----
-
-## Integrating with your chatbot
-
-Your host must be able to **spawn a local MCP server via STDIO**, then call MCP **tools**.
-
-### A) Environment‑variable setup
-
-Point your chatbot to this server script and to your data folder (adjust paths for your machine). On Windows with spaces in paths, prefer **forward slashes** and **no quotes**:
-
-```
-STATS_MCP_PATH=C:/path/to/MCP-Local-DunkMaster/server.py
-STATS_DATA_PATH=C:/path/to/MCP-Local-DunkMaster/data
-```
-
-> If your host uses a `.env` loader (e.g., `python-dotenv`), put them there.  
-> Keep values **without quotes** to avoid spawning errors on Windows.
-
-### B) Spawning the server (STDIO)
-
-- Use the **same Python interpreter** as your host (e.g., `sys.executable`) so the server sees the same site‑packages (pandas, mcp, rapidfuzz).
-- Spawn command:  
-  `command = sys.executable`  
-  `args    = [STATS_MCP_PATH, "--data", STATS_DATA_PATH]`
-- The host should then open a **stdio session** to speak MCP JSON‑RPC with the process.
-
-**Pseudocode (host side):**
-
-```python
-import os, sys
-from mcp.client.stdio import stdio_client
-from mcp import ClientSession  # or equivalent in your MCP client lib
-
-STATS_MCP_PATH = os.getenv("STATS_MCP_PATH")
-STATS_DATA_PATH = os.getenv("STATS_DATA_PATH")
-
-async with stdio_client(command=sys.executable,
-                        args=[STATS_MCP_PATH, "--data", STATS_DATA_PATH]) as (read, write):
-    session = ClientSession(read, write)
-    await session.initialize()
-    tools = await session.list_tools()      # should include player_summary, top_scorers, etc.
-    # Call a tool:
-    resp = await session.call_tool("player_summary", {"player": "Michael Jordan"})
-    print(resp.content[0].text)             # pretty JSON string
-```
-
-> API names may vary slightly by MCP client library version. Any MCP‑capable host should follow the same pattern: **spawn stdio → initialize → list_tools → call_tool**.
-
-### C) Calling tools
-
-- **Tool names**: `player_summary`, `top_scorers`, `compare_players`, `team_summary`
-- **Payload** is a JSON object with the parameters documented above.
-- **Response** returns a single text block containing pretty JSON. Parse or just print it.
-
----
-
-## Natural‑language prompts to test
-
-You can route natural language to these tools from your chatbot’s planner/orchestrator. Examples:
-
-1. “Muéstrame el **resumen de carrera** de **Michael Jordan**.” → `player_summary`
-2. “Top **10 anotadores** de **1996**.” → `top_scorers(season=1996, n=10)`
-3. “Compara **Michael Jordan** vs **LeBron James** por **per_36**.” → `compare_players(basis="per_36")`
-4. “Dame un **resumen de equipo** de **Chicago Bulls** en **1996**.” → `team_summary`
-5. “¿Cuántas **selecciones al All‑Star** tiene **Kobe Bryant**?” → `player_summary`
-6. “Ordena a los **5 mejores anotadores** de **2016**.” → `top_scorers(season=2016, n=5)`
-7. “Compara **Stephen Curry** vs **Damian Lillard** por **per_100**.” → `compare_players`
-8. “Resumen de **Los Angeles Lakers** en **2001**.” → `team_summary`
-9. “Resumen de **Tim Duncan** (equipos, span, promedios).” → `player_summary`
-10. “Top **15** anotadores de **1988**.” → `top_scorers`
-11. “Compara **Larry Bird** vs **Magic Johnson** (per_game).” → `compare_players`
-12. “Dame el SRS y net rating de **Miami Heat** en **2013**.” → `team_summary`
-
 ---
 
 ## Troubleshooting
 
 - **`FileNotFoundError: Missing CSV`**  
-  Verify that file names are **exact** and placed under `./data/`. On Linux/macOS the filesystem is _case‑sensitive_.
+  Ensure exact filenames in `./data/`. On macOS/Linux the filesystem is case‑sensitive.
 
-- **Host “does not connect” / process exits immediately**
+- **HTTP port already in use** (Mode A)  
+  Use another port: `PORT=9010 python http_stats_server.py` → call `http://127.0.0.1:9010/jsonrpc`.
 
-  - Use **`sys.executable`** to spawn the server with the **same venv** as your host.
-  - Install the dependencies in that venv: `pip install -r <repo>/requirements.txt`.
-  - On Windows, **do not add quotes** around `STATS_MCP_PATH` / `STATS_DATA_PATH`.
-  - Prefer **forward slashes** for paths that contain spaces.
+- **STDIO server exits immediately** (Mode B)  
+  - Spawn it with the **same interpreter** as the host (`sys.executable`).
+  - Install deps in that venv: `pip install -r requirements.txt`.
+  - Avoid quotes in `STATS_MCP_PATH`/`STATS_DATA_PATH`. Prefer forward slashes in long paths.
 
-- **`AttributeError: 'FastMCP' has no attribute 'run_stdio'`**  
-  Your `fastmcp` version does not expose that method. This server auto‑detects and falls back to `run()`.
-
-- **Unexpected player/team matches**  
-  Fuzzy matching is used. Try the exact name or refine the query; if your host supports it, add a disambiguation step.
+- **Unexpected fuzzy matches**  
+  Try the exact name or team abbreviation; add disambiguation logic in your host if needed.
 
 ---
 
-## License & Data credit
+## License & data credit
 
-- **Code**: MIT License (see `LICENSE`).
-- **Data**: public basketball datasets consolidated from KP/BBRef (see original Kaggle source you used in your class).  
-  Dataset reference used by students: <https://www.kaggle.com/datasets/sumitrodatta/nba-aba-baa-stats>.
-
----
+- **Code**: MIT (see `LICENSE`).
+- **Data**: consolidated public basketball datasets; classroom reference: <https://www.kaggle.com/datasets/sumitrodatta/nba-aba-baa-stats>.
 
 Happy hacking! 🏀
