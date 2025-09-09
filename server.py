@@ -287,7 +287,6 @@ def main():
     TABLES = load_tables(data_dir)
 
     # Run stdio server (the MCP host will speak JSON-RPC over stdin/stdout)
-    # Ejecuta el servidor MCP por STDIO (según la versión instalada)
 
     if hasattr(mcp, "run_stdio"):
         mcp.run_stdio()
