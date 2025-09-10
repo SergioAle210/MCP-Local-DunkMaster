@@ -1,3 +1,19 @@
+
+"""
+Local NBA Stats MCP (fastmcp)
+
+Exposes JSON-RPC tools over STDIO so your chatbot can query NBA CSV datasets.
+Tools:
+  - player_summary(player): compact career overview + awards/all-star
+  - top_scorers(season, n): top-N PPG for a season
+  - compare_players(a, b, basis): compare career avgs (per_game | per_36 | per_100)
+  - team_summary(season, team): SRS/ORtg/DRtg/pace/W-L from Team Summaries
+
+Run:
+  python server.py --data <folder-with-22-csvs>
+Your host (chatbot) should spawn this process via STDIO or use your HTTP bridge.
+"""
+
 import argparse
 import json
 from dataclasses import dataclass
@@ -6,14 +22,10 @@ from typing import Dict, Any, List, Optional, Tuple
 
 import pandas as pd
 from rapidfuzz import process, fuzz
-
 from mcp.server.fastmcp import FastMCP
 
-# ----------------- Globals -----------------
-TABLES = None  # will hold loaded CSVs once main() runs
-
-# ----------------- Data loading -----------------
-
+# Loaded once in main()
+TABLES = None
 
 @dataclass
 class Tables:
@@ -28,6 +40,7 @@ class Tables:
 
 
 def load_tables(data_dir: Path) -> Tables:
+    """Read required CSVs and normalize common columns."""
     def rd(name: str) -> pd.DataFrame:
         p = data_dir / name
         if not p.exists():
@@ -43,12 +56,12 @@ def load_tables(data_dir: Path) -> Tables:
     awards = rd("Player Award Shares.csv")
     team_summ = rd("Team Summaries.csv")
 
-    # normalize numeric season
+    # Season as numeric
     for df in (per_game, per36, per100, totals, team_summ):
         if "season" in df.columns:
             df["season"] = pd.to_numeric(df["season"], errors="coerce")
 
-    # trim names
+    # Trim player names
     for df in (per_game, per36, per100, totals, career, allstar, awards):
         if "player" in df.columns:
             df["player"] = df["player"].astype(str).str.strip()
@@ -56,10 +69,10 @@ def load_tables(data_dir: Path) -> Tables:
     return Tables(per_game, per36, per100, totals, career, allstar, awards, team_summ)
 
 
-# ----------------- Utils -----------------
-
+# Utils
 
 def _best_match(name: str, choices: List[str]) -> Tuple[str, float]:
+    """Fuzzy-match a name against a list of choices."""
     if not choices:
         return name, 0.0
     match, score, _ = process.extractOne(name, choices, scorer=fuzz.WRatio)
@@ -67,6 +80,7 @@ def _best_match(name: str, choices: List[str]) -> Tuple[str, float]:
 
 
 def _ensure_loaded():
+    """Guard: tools require tables loaded in main()."""
     if TABLES is None:
         raise RuntimeError(
             "Server not initialized. Run: python server.py --data <folder-with-csvs>"
@@ -74,18 +88,17 @@ def _ensure_loaded():
 
 
 def _json(obj: Any) -> str:
-    """Return pretty JSON text (fastmcp will send it as text content)."""
+    """Pretty JSON for text content blocks."""
     return json.dumps(obj, ensure_ascii=False, indent=2)
 
 
-# ----------------- MCP server -----------------
-
+# FastMCP server instance
 mcp = FastMCP("DunkMaster Stats MCP (Local)")
 
 
 @mcp.tool(name="player_summary")
 def player_summary(player: str) -> str:
-    """Return a compact career summary with teams, span and basic career averages."""
+    """Compact career summary with span, teams, weighted career averages, all-star & top award shares."""
     _ensure_loaded()
     T = TABLES
 
@@ -103,15 +116,12 @@ def player_summary(player: str) -> str:
             {"match": None, "score": 0.0, "error": f"Player '{player}' not found."}
         )
 
-    seasons = (
-        sorted(pdf["season"].dropna().unique().tolist()) if "season" in pdf else []
-    )
+    seasons = sorted(pdf["season"].dropna().unique().tolist()) if "season" in pdf else []
     span = (min(seasons), max(seasons)) if seasons else (None, None)
-    teams = (
-        sorted(set(pdf["team"].dropna().astype(str))) if "team" in pdf.columns else []
-    )
+    teams = sorted(set(pdf["team"].dropna().astype(str))) if "team" in pdf.columns else []
 
     def wavg(df: pd.DataFrame, num: str, den: str = "g") -> Optional[float]:
+        """Game-weighted average: sum(num * g) / sum(g)."""
         if num not in df.columns or den not in df.columns:
             return None
         sub = df[[num, den]].dropna()
@@ -152,7 +162,7 @@ def player_summary(player: str) -> str:
 
 @mcp.tool(name="top_scorers")
 def top_scorers(season: int, n: int = 10) -> str:
-    """Top-N by points per game for a given season."""
+    """Return top-N by points per game for a season."""
     _ensure_loaded()
     T = TABLES
     df = T.per_game[T.per_game["season"] == season].copy()
@@ -169,7 +179,7 @@ def top_scorers(season: int, n: int = 10) -> str:
 
 @mcp.tool(name="compare_players")
 def compare_players(player_a: str, player_b: str, basis: str = "per_game") -> str:
-    """Compare career averages by basis: per_game | per_36 | per_100."""
+    """Compare career averages using a basis: per_game | per_36 | per_100."""
     _ensure_loaded()
     T = TABLES
     basis_map = {
@@ -198,8 +208,8 @@ def compare_players(player_a: str, player_b: str, basis: str = "per_game") -> st
     a_name, a_score = _best_match(player_a, choices)
     b_name, b_score = _best_match(player_b, choices)
 
-    def career(df: pd.DataFrame, who: str) -> Dict[str, Any]:
-        sub = df[df["player"] == who]
+    def career(subdf: pd.DataFrame, who: str) -> Dict[str, Any]:
+        sub = subdf[subdf["player"] == who]
         if sub.empty:
             return {"match": who, "g": 0, "pts": None, "ast": None, "trb": None}
         g = sub["g"].dropna()
@@ -213,15 +223,9 @@ def compare_players(player_a: str, player_b: str, basis: str = "per_game") -> st
         return {
             "match": who,
             "g": int(gsum),
-            "pts": (
-                round(wavg(cols["pts"]), 2) if wavg(cols["pts"]) is not None else None
-            ),
-            "ast": (
-                round(wavg(cols["ast"]), 2) if wavg(cols["ast"]) is not None else None
-            ),
-            "trb": (
-                round(wavg(cols["trb"]), 2) if wavg(cols["trb"]) is not None else None
-            ),
+            "pts": round(wavg(cols["pts"]), 2) if wavg(cols["pts"]) is not None else None,
+            "ast": round(wavg(cols["ast"]), 2) if wavg(cols["ast"]) is not None else None,
+            "trb": round(wavg(cols["trb"]), 2) if wavg(cols["trb"]) is not None else None,
         }
 
     result = {
@@ -234,7 +238,7 @@ def compare_players(player_a: str, player_b: str, basis: str = "per_game") -> st
 
 @mcp.tool(name="team_summary")
 def team_summary(season: int, team: str) -> str:
-    """Return SRS, ORtg, DRtg, pace, W-L from Team Summaries."""
+    """Return W/L, SRS, ORtg, DRtg, pace, and a few shooting/possession metrics."""
     _ensure_loaded()
     T = TABLES
     df = T.team_summ[T.team_summ["season"] == season].copy()
@@ -247,17 +251,8 @@ def team_summary(season: int, team: str) -> str:
         return _json({"match": None, "score": 0.0, "error": f"Team '{team}' not found"})
     r = row.iloc[0].to_dict()
     fields = [
-        "w",
-        "l",
-        "srs",
-        "o_rtg",
-        "d_rtg",
-        "n_rtg",
-        "pace",
-        "ts_percent",
-        "e_fg_percent",
-        "tov_percent",
-        "orb_percent",
+        "w", "l", "srs", "o_rtg", "d_rtg", "n_rtg", "pace",
+        "ts_percent", "e_fg_percent", "tov_percent", "orb_percent",
     ]
     return _json(
         {
@@ -269,15 +264,13 @@ def team_summary(season: int, team: str) -> str:
     )
 
 
-# ----------------- Main -----------------
-
+# Main entry point
 
 def main():
+    """Parse args, load CSVs, and start the FastMCP STDIO loop."""
     global TABLES
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--data", required=True, help="Path to folder containing the 22 CSV files."
-    )
+    parser.add_argument("--data", required=True, help="Path to folder containing the 22 CSV files.")
     args = parser.parse_args()
 
     data_dir = Path(args.data).expanduser().resolve()
@@ -286,16 +279,13 @@ def main():
 
     TABLES = load_tables(data_dir)
 
-    # Run stdio server (the MCP host will speak JSON-RPC over stdin/stdout)
-
+    # Start STDIO server (host speaks JSON-RPC over stdin/stdout).
     if hasattr(mcp, "run_stdio"):
         mcp.run_stdio()
     elif hasattr(mcp, "run"):
         mcp.run()
     else:
-        raise RuntimeError(
-            "This fastmcp version exposes neither run_stdio() nor run(). Please upgrade 'mcp'."
-        )
+        raise RuntimeError("This fastmcp version exposes neither run_stdio() nor run(). Please upgrade 'mcp'.")
 
 
 if __name__ == "__main__":
