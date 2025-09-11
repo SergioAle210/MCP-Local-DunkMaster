@@ -101,6 +101,14 @@ def _match_team_row(df: pd.DataFrame, season: int, team: str):
             m = reg
     return m.iloc[0]
 
+def _pct(x):
+    try:
+        v = float(x)
+        if pd.isna(v):
+            return float("nan")
+        return v*100.0 if v <= 1.0 else v
+    except Exception:
+        return float("nan")
 
 # Tool implementations (return plain text)
 def tool_player_summary(player: str) -> str:
@@ -161,10 +169,10 @@ def tool_team_summary(season: int, team: str) -> str:
     drtg = float(row_sum.get("d_rtg", float("nan")))
     nrtg = float(row_sum.get("n_rtg", (ortg - drtg) if (pd.notna(ortg) and pd.notna(drtg)) else float("nan")))
     pace = float(row_sum.get("pace", float("nan")))
-    ts   = float(row_sum.get("ts_percent", float("nan"))) * 100 if row_sum.get("ts_percent") == row_sum.get("ts_percent") else float("nan")
-    efg  = float(row_sum.get("e_fg_percent", float("nan"))) * 100 if row_sum.get("e_fg_percent") == row_sum.get("e_fg_percent") else float("nan")
-    tov  = float(row_sum.get("tov_percent", float("nan"))) * 100 if row_sum.get("tov_percent") == row_sum.get("tov_percent") else float("nan")
-    orb  = float(row_sum.get("orb_percent", float("nan"))) * 100 if row_sum.get("orb_percent") == row_sum.get("orb_percent") else float("nan")
+    ts   = _pct(row_sum.get("ts_percent"))
+    efg  = _pct(row_sum.get("e_fg_percent"))
+    tov  = _pct(row_sum.get("tov_percent"))
+    orb  = _pct(row_sum.get("orb_percent"))
     ftfga = float(row_sum.get("ft_fga", float("nan")))
 
     # Per-game box stats
@@ -172,7 +180,7 @@ def tool_team_summary(season: int, team: str) -> str:
     pts_pg = float(row_pg.get("pts_per_game", float("nan"))) if row_pg is not None else float("nan")
     ast_pg = float(row_pg.get("ast_per_game", float("nan"))) if row_pg is not None else float("nan")
     trb_pg = float(row_pg.get("trb_per_game", float("nan"))) if row_pg is not None else float("nan")
-    x3p_pct = float(row_pg.get("x3p_percent", float("nan"))) * 100 if (row_pg is not None and row_pg.get("x3p_percent") == row_pg.get("x3p_percent")) else float("nan")
+    x3p_pct = _pct(row_pg.get("x3p_percent")) if row_pg is not None else float("nan")
 
     name_out = row_sum.get("team", team)
     abbr_out = f" ({abbr})" if abbr else ""
