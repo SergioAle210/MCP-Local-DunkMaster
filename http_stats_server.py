@@ -213,17 +213,17 @@ TOOLS = [
     {"name": "team_summary",     "description": "Team summary in a season", "inputSchema": {"type": "object", "properties": {"season":{"type":"integer"}, "team":{"type":"string"}}, "required": ["season","team"]}},
 ]
 
-
+# JSON-RPC helpers
 def _jsonrpc_result(id_, result):
     """Helper: JSON-RPC success envelope."""
     return {"jsonrpc": "2.0", "id": id_, "result": result}
 
-
+# Error codes: https://www.jsonrpc.org/specification#error_object
 def _jsonrpc_error(id_, code, message):
     """Helper: JSON-RPC error envelope."""
     return {"jsonrpc": "2.0", "id": id_, "error": {"code": code, "message": message}}
 
-
+# JSON-RPC endpoint
 @app.post("/jsonrpc")
 async def jsonrpc(request: Request):
     """
@@ -236,15 +236,20 @@ async def jsonrpc(request: Request):
     id_ = body.get("id")
 
     try:
+        # Handle methods
+        # - initialize
         if method == "initialize":
             return JSONResponse(_jsonrpc_result(id_, {"protocolVersion": "2.0"}))
 
+        # - tools/list
         if method == "tools/list":
             return JSONResponse(_jsonrpc_result(id_, {"tools": TOOLS}))
 
+        # - tools/call
         if method == "tools/call":
             name = params.get("name")
             args = params.get("arguments", {}) or {}
+            # Validate tool name and args
             if name == "player_summary":
                 text = tool_player_summary(args.get("player", ""))
             elif name == "top_scorers":
@@ -258,6 +263,7 @@ async def jsonrpc(request: Request):
             # mimic MCP content blocks
             return JSONResponse(_jsonrpc_result(id_, {"content": [{"type": "text", "text": text}], "isError": False}))
 
+        # - shutdown
         if method == "shutdown":
             return JSONResponse(_jsonrpc_result(id_, {"ok": True}))
 
